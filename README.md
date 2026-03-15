@@ -57,10 +57,10 @@ MindGuard 需要获取您当前正在使用的应用状态才能进行计时。
 3. 通过回顾每周的数据图表，你可以清晰地看到自己注意力的改善轨迹。
 
 ### 🛠️ 技术栈 (Tech Stack)
-# 核心逻辑: Swift
-# 底层接口与兼容: Objective-C
-# UI 框架: AppKit / SwiftUI
-# 系统 API: 深度调用 NSWorkspace, NSRunningApplication 等 macOS 原生 API 进行状态监测。
+ 核心逻辑: Swift
+ 底层接口与兼容: Objective-C
+ UI 框架: AppKit / SwiftUI
+ 系统 API: 深度调用 NSWorkspace, NSRunningApplication 等 macOS 原生 API 进行状态监测。
 
 ### 🤝 参与贡献 (Contributing)
 欢迎提交 Issue 报告 Bug 或提出新功能建议！如果你想为 MindGuard 贡献代码，请：
