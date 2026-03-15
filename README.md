@@ -28,3 +28,6 @@ MindGuard 是一款专为 macOS 打造的效率与屏幕时间管理应用。在
 1. 克隆本仓库到本地：
    ```bash
    git clone [https://github.com/lemonhamburger05/MindGuard.git](https://github.com/lemonhamburger05/MindGuard.git)
+2. 使用 Xcode 打开 MindGuard.xcodeproj（或 .xcworkspace）。
+3. 选择你的 Mac 作为运行目标 (Target)。
+4. 点击 Cmd + R 编译并运行。
