@@ -1,0 +1,13 @@
+{
+    "blacklist": [
+        "抖音",
+        "Douyin",
+        "TikTok",
+        "YouTube",
+        "Bilibili",
+        "爱奇艺",
+        "IINA"
+    ],
+    "max_entertainment_seconds": 15,
+    "required_task": "阅读一篇论文或敲50行代码"
+}

@@ -1,148 +1,272 @@
 import rumps
 import subprocess
-import time
+import json
+import os
+from datetime import date
+import AppKit
+
+# 动态获取当前 main.py 所在的绝对路径
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(BASE_DIR, "config.json")
+DATA_FILE = os.path.join(BASE_DIR, "data.json")
 
 
 class MindGuardApp(rumps.App):
     def __init__(self):
-        # 初始化，默认标题用 Emoji
-        super(MindGuardApp, self).__init__("🧠 准备中...")
+        super(MindGuardApp, self).__init__("🧠 启动中...")
 
-        self.status_item = rumps.MenuItem("当前状态: 检查中...")
-        self.timer_item = rumps.MenuItem("娱乐时长: 0秒")
+        self.load_config()
+        self.load_today_data()
+
+        # --- UI 菜单初始化 ---
+        self.status_item = rumps.MenuItem("状态: 检查中...")
+        self.stats_item = rumps.MenuItem("今日概览: 加载中...")
         self.unlock_btn = rumps.MenuItem("✅ 完成任务并解锁", callback=self.try_unlock)
 
-        self.menu = [self.status_item, self.timer_item, None, self.unlock_btn, None, "退出"]
+        # 组装符合《用户手册》的菜单结构
+        self.menu = [
+            self.status_item,
+            self.stats_item,
+            None,
+            # 规则设置 (Rules) - 二级菜单
+            ["⚙️ 规则设置 (Rules)", [
+                rumps.MenuItem("➕ 添加限制应用", callback=self.add_blacklist_app),
+                rumps.MenuItem("⏱️ 设定每日配额", callback=self.change_quota),
+                rumps.MenuItem("📋 查看当前黑名单", callback=self.view_blacklist)
+            ]],
+            # 统计 (Statistics)
+            rumps.MenuItem("📊 查看专注报告", callback=self.show_statistics),
+            None,
+            self.unlock_btn,
+            None,
+            "退出"
+        ]
 
-        # --- 配置区 ---
-        # 既包含中文名也包含英文进程名
-        self.blacklist = ["抖音", "Douyin", "TikTok", "YouTube", "Bilibili", "爱奇艺", "IINA"]
-        self.MAX_ENTERTAINMENT_SECONDS = 300
-
-        # --- 状态区 ---
-        self.current_usage = 0
         self.is_locked = False
-        self.required_task = "背诵5个单词"
+        self.save_counter = 0
+
+        # ================= 1. 规则设置 (Rules) 模块 =================
+
+    def add_blacklist_app(self, _):
+        # 使用原生 AppleScript 弹窗
+        script = '''
+        tell application "System Events"
+            activate
+            set dialog_result to display dialog "请输入想限制的应用名称 (例如: TikTok, 微信):" default answer "" buttons {"取消", "添加"} default button "添加"
+            return text returned of dialog_result
+        end tell
+        '''
+        try:
+            new_app = subprocess.check_output(['osascript', '-e', script]).decode('utf-8').strip()
+            if new_app:
+                if new_app.lower() not in [app.lower() for app in self.config["blacklist"]]:
+                    self.config["blacklist"].append(new_app)
+                    self.save_config()
+                    rumps.notification("✅ 添加成功", "", f"已将【{new_app}】加入限制名单")
+                else:
+                    rumps.notification("⚠️ 提示", "", "该应用已在名单中")
+        except subprocess.CalledProcessError:
+            pass # 用户点击了取消
+
+    def change_quota(self, _):
+        current_min = self.config["max_entertainment_seconds"] // 60
+        script = f'''
+        tell application "System Events"
+            activate
+            set dialog_result to display dialog "当前配额: {current_min}分钟。\\n请输入新配额 (数字):" default answer "" buttons {"取消", "保存"} default button "保存"
+            return text returned of dialog_result
+        end tell
+        '''
+        try:
+            new_min_str = subprocess.check_output(['osascript', '-e', script]).decode('utf-8').strip()
+            if new_min_str.isdigit():
+                self.config["max_entertainment_seconds"] = int(new_min_str) * 60
+                self.save_config()
+                rumps.notification("✅ 设置成功", "", f"每日配额已更新为 {new_min_str} 分钟")
+        except subprocess.CalledProcessError:
+            pass
+
+    def view_blacklist(self, _):
+        """辅助功能：查看当前被限制的软件列表"""
+        AppKit.NSApp.activateIgnoringOtherApps_(True) # 强制获取焦点
+        apps_str = "\n".join([f"- {app}" for app in self.config["blacklist"]])
+        rumps.alert("📋 当前限制名单", apps_str)
+
+    # ================= 2. 统计 (Statistics) 模块 =================
+
+    def show_statistics(self, _):
+        """对应手册第四步：查看你的专注报告"""
+        AppKit.NSApp.activateIgnoringOtherApps_(True)  # 强制获取焦点
+
+        f_sec = self.today_data.get("focus_seconds", 0)
+        e_sec = self.today_data.get("entertainment_seconds", 0)
+        total_sec = f_sec + e_sec
+
+        # 计算专注率
+        ratio = 0 if total_sec == 0 else int((f_sec / total_sec) * 100)
+
+        # 将进度条长度缩短为 12，防止在原生弹窗中换行
+        bar_length = 12
+        focus_bars = int((ratio / 100) * bar_length)
+        visual_bar = "█" * focus_bars + "░" * (bar_length - focus_bars)
+
+        report_text = f"📅 日期：{self.today_str}\n\n"
+        report_text += f"🟢 专注时长：{f_sec // 60} 分 {f_sec % 60} 秒\n"
+        report_text += f"🔴 娱乐时长：{e_sec // 60} 分 {e_sec % 60} 秒\n\n"
+        report_text += f"🏆 今日专注率：{ratio}%\n"
+        report_text += f"[{visual_bar}]"
+
+        rumps.alert("📊 你的专注报告", report_text)
+
+    # ================= 数据持久化模块 =================
+
+    def load_config(self):
+        default_config = {
+            "blacklist": ["抖音", "Douyin", "TikTok", "YouTube", "Bilibili", "爱奇艺", "IINA"],
+            "max_entertainment_seconds": 15,  # 测试用，你可以通过UI改大
+            "required_task": "阅读一篇论文或敲50行代码"
+        }
+        if os.path.exists(CONFIG_FILE):
+            try:
+                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                    self.config = json.load(f)
+            except Exception:
+                self.config = default_config
+        else:
+            self.config = default_config
+            self.save_config()
+
+    def save_config(self):
+        try:
+            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f, indent=4, ensure_ascii=False)
+        except Exception:
+            pass
+
+    def load_today_data(self):
+        self.today_str = date.today().isoformat()
+        self.all_data = {}
+        if os.path.exists(DATA_FILE):
+            try:
+                with open(DATA_FILE, 'r', encoding='utf-8') as f:
+                    self.all_data = json.load(f)
+            except Exception:
+                pass
+
+        if self.today_str not in self.all_data:
+            self.all_data[self.today_str] = {"focus_seconds": 0, "entertainment_seconds": 0}
+        self.today_data = self.all_data[self.today_str]
+
+    def save_data(self):
+        try:
+            self.all_data[self.today_str] = self.today_data
+            with open(DATA_FILE, 'w', encoding='utf-8') as f:
+                json.dump(self.all_data, f, indent=4, ensure_ascii=False)
+        except Exception:
+            pass
+
+    # ================= 核心监控逻辑 =================
 
     @rumps.timer(1)
     def monitor_loop(self, _):
-        # 1. 获取信息
+        current_date = date.today().isoformat()
+        if current_date != self.today_str:
+            self.load_today_data()
+
         app_name, window_title = self.get_active_window_info()
 
-        # 调试打印：看看到底抓到了什么
-        print(f"检测中 -> App: [{app_name}] | Title: [{window_title}]")
-
-        # 2. 判断逻辑
         is_entertaining = False
-
-        # 检查1: App 名字本身是否在黑名单 (针对抖音桌面版)
-        for keyword in self.blacklist:
-            if keyword.lower() in app_name.lower():
+        combined_info = f"{app_name} {window_title}".lower()
+        for keyword in self.config["blacklist"]:
+            if keyword.lower() in combined_info:
                 is_entertaining = True
                 break
 
-        # 检查2: 如果App名字没中，检查窗口标题 (针对浏览器看视频)
-        if not is_entertaining:
-            combined_info = f"{window_title}"
-            for keyword in self.blacklist:
-                if keyword.lower() in combined_info.lower():
-                    is_entertaining = True
-                    break
-
-        # 3. 执行动作
         if is_entertaining:
             self.handle_entertainment(app_name)
         else:
             self.handle_learning()
 
+        f_min = self.today_data["focus_seconds"] // 60
+        e_min = self.today_data["entertainment_seconds"] // 60
+        self.stats_item.title = f"今日概览: 🟢专注 {f_min}分 | 🔴娱乐 {e_min}分"
+
+        self.save_counter += 1
+        if self.save_counter >= 3:
+            self.save_data()
+            self.save_counter = 0
+
     def handle_entertainment(self, app_name):
-        if self.is_locked:
-            # 锁定状态：修改文字标题，不改icon避免报错
+        max_time = self.config["max_entertainment_seconds"]
+        current_usage = self.today_data["entertainment_seconds"]
+
+        if self.is_locked or current_usage >= max_time:
+            if not self.is_locked:
+                self.lock_system()
             self.title = "🔒 已锁定"
             self.status_item.title = "状态: ⛔️ 禁止访问"
-
-            # 强制隐藏该应用
-            print(f"尝试隐藏: {app_name}")
             self.hide_app(app_name)
-
         else:
-            self.current_usage += 1
-            self.title = f"👀 摸鱼 {self.current_usage}s"
+            self.today_data["entertainment_seconds"] += 1
+            remain = max_time - self.today_data["entertainment_seconds"]
+            self.title = f"👀 摸鱼中 (余 {remain}s)"
             self.status_item.title = f"状态: 正在看 {app_name}"
-            self.timer_item.title = f"已用: {self.current_usage}/{self.MAX_ENTERTAINMENT_SECONDS}秒"
-
-            if self.current_usage >= self.MAX_ENTERTAINMENT_SECONDS:
-                self.lock_system()
 
     def handle_learning(self):
         if not self.is_locked:
-            # 只有没锁定时才恢复状态
-            self.title = "🧠 学习中"
-            self.status_item.title = "状态: 🟢 专注"
-            # 可选：学习时慢慢恢复娱乐时间
-            # if self.current_usage > 0: self.current_usage -= 1
+            self.today_data["focus_seconds"] += 1
+            self.title = "🧠 专注中"
+            self.status_item.title = "状态: 🟢 学习/工作中"
 
     def lock_system(self):
         self.is_locked = True
-        # 发送通知
-        rumps.notification("时间到！", "休息时间结束", f"请完成任务：{self.required_task}")
-        # 确保解锁按钮是激活状态
-        self.unlock_btn.state = 0
+        try:
+            rumps.notification("配额耗尽！", "今日娱乐时间已达上限", f"请完成任务：{self.config['required_task']}")
+        except RuntimeError:
+            pass
+        self.save_data()
 
     def hide_app(self, app_name):
-        # AppleScript 强制隐藏
         script = f'tell application "System Events" to set visible of process "{app_name}" to false'
         try:
             subprocess.run(['osascript', '-e', script], check=False)
-        except Exception as e:
-            print(f"隐藏失败: {e}")
+        except:
+            pass
 
     def try_unlock(self, _):
         if not self.is_locked:
+            AppKit.NSApp.activateIgnoringOtherApps_(True)
             rumps.alert("提示", "当前未锁定，无需解锁。")
             return
 
+        AppKit.NSApp.activateIgnoringOtherApps_(True)  # 强制获取焦点
         window = rumps.Window(
-            message=f"需完成任务：【{self.required_task}】",
+            message=f"需完成任务：【{self.config['required_task']}】\n（解锁将额外赠送30%的时间）",
             title="任务检查",
             ok="完成",
             cancel="取消"
         )
         response = window.run()
-
-        if response.clicked:
-            if len(response.text) > 0:
-                self.is_locked = False
-                self.current_usage = 0
-                self.title = "🧠 已解锁"
-                rumps.notification("解锁成功", "继续加油", "")
-            else:
-                rumps.alert("拒绝", "请输入具体的完成情况！")
+        if response.clicked and len(response.text) > 0:
+            self.is_locked = False
+            bonus_time = int(self.config["max_entertainment_seconds"] * 0.3)
+            self.today_data["entertainment_seconds"] = max(0, self.today_data["entertainment_seconds"] - bonus_time)
+            self.save_data()
+            self.title = "🧠 已解锁"
+            try:
+                rumps.notification("解锁成功", "继续加油", f"已为你恢复 {bonus_time} 秒额度。")
+            except RuntimeError:
+                pass
+        elif response.clicked:
+            rumps.alert("拒绝", "请输入具体的完成情况！")
 
     def get_active_window_info(self):
         try:
-            # 获取 App 名字 (核心步骤)
             script_app = 'tell application "System Events" to get name of first application process whose frontmost is true'
-            # 使用 subprocess.check_output 并捕获错误
             res_app = subprocess.check_output(['osascript', '-e', script_app], stderr=subprocess.STDOUT).decode(
                 'utf-8').strip()
-
-            # 获取标题 (辅助)
-            title = ""
-            # 如果是浏览器，尝试获取 Tab 标题
-            if res_app in ["Google Chrome", "Microsoft Edge", "Safari"]:
-                # 这里省略具体的浏览器脚本以简化排错，先保证能抓到 App 名字
-                pass
-
-            return res_app, title
-
-        except subprocess.CalledProcessError as e:
-            # 这里是最关键的调试信息！
-            error_msg = e.output.decode('utf-8').strip() if e.output else "无详细错误"
-            print(f"⚠️ 获取窗口信息失败: {error_msg}")
-            return "Unknown", ""
-        except Exception as e:
-            print(f"⚠️ 未知错误: {e}")
+            return res_app, ""
+        except Exception:
             return "Unknown", ""
 
 
